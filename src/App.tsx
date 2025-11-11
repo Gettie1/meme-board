@@ -1,9 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import type { DragEvent } from "react";
 import { createClient } from "@supabase/supabase-js";
+import { Auth } from "@supabase/auth-ui-react";
+/* ThemeSupa import removed because @supabase/auth-ui-shared is not available; appearance prop removed from Auth below. */
 
 // ----------------------
-// Initialize Supabase here using .env
+// Initialize Supabase
 // ----------------------
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL!;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY!;
@@ -12,6 +14,11 @@ const supabase = createClient(supabaseUrl, supabaseAnonKey);
 // ----------------------
 // Types
 // ----------------------
+interface ReactionRow {
+  type: "heart" | "laugh" | "wow" | "sad";
+  user_id: string;
+}
+
 interface Meme {
   id: string;
   url: string;
@@ -33,20 +40,31 @@ function App() {
   const [caption, setCaption] = useState("");
   const [userId, setUserId] = useState<string | null>(null);
 
-  // Get current user session
+  // ----------------------
+  // Auth session
+  // ----------------------
   useEffect(() => {
+    // Get current session
     supabase.auth.getSession().then(({ data }) => {
       if (data.session?.user) setUserId(data.session.user.id);
     });
 
-    // Optional: subscribe to auth changes
-    supabase.auth.onAuthStateChange((_event, session) => {
-      setUserId(session?.user?.id ?? null);
-    });
+    // Listen to auth changes
+    const { data: listener } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        setUserId(session?.user?.id ?? null);
+      }
+    );
+
+    return () => {
+      listener.subscription.unsubscribe();
+    };
   }, []);
 
-  // Fetch memes + reactions
-  const fetchMemes = async () => {
+  // ----------------------
+  // Fetch memes
+  // ----------------------
+  const fetchMemes = useCallback(async () => {
     if (!userId) return;
 
     const { data, error } = await supabase
@@ -60,7 +78,16 @@ function App() {
     if (error) return console.error(error);
 
     if (data) {
-      const formatted: Meme[] = data.map((m: any) => {
+      type MemeRow = {
+        id: string;
+        url: string;
+        caption: string;
+        user_id: string;
+        created_at: string;
+        reactions: ReactionRow[];
+      };
+
+      const formatted: Meme[] = (data as MemeRow[]).map((m) => {
         const reactionsCount: { [key: string]: number } = {
           heart: 0,
           laugh: 0,
@@ -69,7 +96,7 @@ function App() {
         };
         let userReaction: string | undefined = undefined;
 
-        m.reactions.forEach((r: any) => {
+        m.reactions.forEach((r) => {
           reactionsCount[r.type] = (reactionsCount[r.type] || 0) + 1;
           if (r.user_id === userId) userReaction = r.type;
         });
@@ -87,11 +114,11 @@ function App() {
 
       setMemes(formatted);
     }
-  };
+  }, [userId]);
 
   useEffect(() => {
     fetchMemes();
-  }, [userId]);
+  }, [fetchMemes]);
 
   // ----------------------
   // Cloudinary upload
@@ -132,7 +159,7 @@ function App() {
   };
 
   // ----------------------
-  // Handle reactions
+  // Reactions
   // ----------------------
   const handleReaction = async (memeId: string, reaction: string) => {
     if (!userId) return alert("You must be logged in!");
@@ -172,6 +199,19 @@ function App() {
   // ----------------------
   // Render
   // ----------------------
+  if (!userId) {
+    // Show Supabase Auth UI if not logged in
+    return (
+      <div style={{ maxWidth: 400, margin: "2rem auto" }}>
+        <h2 style={{ textAlign: "center" }}>Login to Meme Board</h2>
+        <Auth
+          supabaseClient={supabase}
+          providers={["google", "github"]}
+        />
+      </div>
+    );
+  }
+
   return (
     <div style={{ padding: "2rem", fontFamily: "sans-serif" }}>
       <h1 style={{ textAlign: "center" }}>Meme Board 🤣</h1>
